@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Video Converter - Comprimir Vídeos</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🎬 Video Converter</h1>
+      <p>Comprima até 5 vídeos simultaneamente</p>
+    </header>
+
+    <main>
+      <form id="uploadForm" class="upload-form">
+        <div class="drop-zone" id="dropZone">
+          <div class="drop-zone-content">
+            <span class="drop-icon">📁</span>
+            <p>Arraste vídeos aqui ou clique para selecionar</p>
+            <span class="file-count">(máximo 5 arquivos)</span>
+            <div class="file-list" id="fileList"></div>
+          </div>
+          <input type="file" id="videoInput" name="videos" accept="video/*" multiple hidden>
+        </div>
+
+        <div class="options">
+          <div class="option-group">
+            <label for="crf">Qualidade (CRF)</label>
+            <select id="crf" name="crf">
+              <option value="18">Alta (CRF 18) - Arquivo maior</option>
+              <option value="23" selected>Média (CRF 23) - Recomendado</option>
+              <option value="28">Baixa (CRF 28) - Arquivo menor</option>
+              <option value="32">Muito Baixa (CRF 32) - Máxima compressão</option>
+            </select>
+          </div>
+
+          <div class="option-group">
+            <label for="resolution">Resolução</label>
+            <select id="resolution" name="resolution">
+              <option value="original" selected>Manter original</option>
+              <option value="1080p">1080p (Full HD)</option>
+              <option value="720p">720p (HD)</option>
+              <option value="480p">480p (SD)</option>
+              <option value="360p">360p</option>
+            </select>
+          </div>
+        </div>
+
+        <button type="submit" class="btn-compress" id="btnCompress" disabled>
+          Comprimir Vídeos
+        </button>
+      </form>
+
+      <div class="jobs-section" id="jobsSection" hidden>
+        <div class="jobs-header">
+          <h3>Processando Vídeos</h3>
+          <div class="queue-status" id="queueStatus"></div>
+        </div>
+        <div class="jobs-list" id="jobsList"></div>
+        <div class="jobs-actions" id="jobsActions" hidden>
+          <button class="btn-download-all" id="btnDownloadAll">
+            ⬇️ Baixar Todos
+          </button>
+          <button class="btn-new" id="btnNew">
+            Comprimir mais vídeos
+          </button>
+        </div>
+      </div>
+
+      <div class="error-section" id="errorSection" hidden>
+        <h3>❌ Erro</h3>
+        <p id="errorMessage"></p>
+        <button class="btn-new" id="btnRetry">Tentar novamente</button>
+      </div>
+    </main>
+
+    <footer>
+      <p>Powered by FFmpeg | Até 5 vídeos em paralelo</p>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

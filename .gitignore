@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Output files (compressed videos)
+output/
+
+# Uploaded files
+uploads/
+
+# Environment variables
+.env
+.env.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db

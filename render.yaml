@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: ffmpeg-compress-web
+    runtime: docker
+    plan: starter
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+    disk:
+      name: video-storage
+      mountPath: /app/output
+      sizeGB: 1

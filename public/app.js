@@ -101,6 +101,7 @@ uploadForm.addEventListener('submit', async (e) => {
   });
   formData.append('crf', document.getElementById('crf').value);
   formData.append('resolution', document.getElementById('resolution').value);
+  formData.append('maxSize', document.getElementById('maxSize').value);
   
   uploadForm.hidden = true;
   jobsSection.hidden = false;

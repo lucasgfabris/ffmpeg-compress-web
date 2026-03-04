@@ -57,7 +57,7 @@ function processNext() {
   }
 }
 
-function startFFmpegProcess({ jobId, inputPath, outputPath, crf, resolution }) {
+function startFFmpegProcess({ jobId, inputPath, outputPath, crf, resolution, maxSizeMB }) {
   const job = jobs.get(jobId);
   if (!job) return;
 
@@ -71,69 +71,235 @@ function startFFmpegProcess({ jobId, inputPath, outputPath, crf, resolution }) {
     '360p': 'scale=640:-2'
   }[resolution] : null;
 
-  let command = ffmpeg(inputPath)
-    .outputOptions([
+  function runCrfEncode() {
+    let command = ffmpeg(inputPath)
+      .outputOptions([
+        '-y',
+        '-c:v', 'libx264',
+        '-crf', String(crf),
+        '-preset', 'medium',
+        '-c:a', 'aac',
+        '-b:a', '128k',
+        '-movflags', '+faststart',
+        '-pix_fmt', 'yuv420p',
+        '-max_muxing_queue_size', '1024'
+      ]);
+
+    if (scaleFilter) {
+      command = command.outputOptions(['-vf', scaleFilter]);
+    }
+
+    command
+      .on('progress', (progress) => {
+        const job = jobs.get(jobId);
+        if (job) {
+          job.progress = Math.round(progress.percent || 0);
+          jobs.set(jobId, job);
+        }
+      })
+      .on('end', () => {
+        activeProcesses--;
+        const job = jobs.get(jobId);
+        if (job) {
+          job.status = 'completed';
+          job.progress = 100;
+
+          try {
+            const inputStats = fs.statSync(inputPath);
+            const outputStats = fs.statSync(outputPath);
+            job.inputSize = inputStats.size;
+            job.outputSize = outputStats.size;
+            job.compression = Math.round((1 - outputStats.size / inputStats.size) * 100);
+          } catch (e) {
+            console.error('Erro ao obter stats:', e.message);
+          }
+
+          jobs.set(jobId, job);
+        }
+
+        fs.unlink(inputPath, () => {});
+        processNext();
+      })
+      .on('error', (err, stdout, stderr) => {
+        activeProcesses--;
+        console.error('Erro no FFmpeg:', err.message);
+        console.error('FFmpeg stderr:', stderr);
+        const job = jobs.get(jobId);
+        if (job) {
+          job.status = 'error';
+          job.error = err.message || 'Erro desconhecido no FFmpeg';
+          jobs.set(jobId, job);
+        }
+
+        fs.unlink(inputPath, () => {});
+        processNext();
+      })
+      .save(outputPath);
+  }
+
+  function runTwoPassEncode(videoBitrateKbps, audioBitrateKbps, filterArg) {
+    const passlogfile = path.join(outputDir, `ffmpeg2pass-${jobId}`);
+    const safeVideoBitrate = Math.max(50, Math.floor(videoBitrateKbps));
+    const safeAudioBitrate = Math.max(32, Math.floor(audioBitrateKbps));
+
+    const pass1Options = [
       '-y',
       '-c:v', 'libx264',
-      '-crf', String(crf),
+      '-b:v', `${safeVideoBitrate}k`,
       '-preset', 'medium',
+      '-pass', '1',
+      '-passlogfile', passlogfile,
+      '-an',
+      '-f', 'null',
+      '-pix_fmt', 'yuv420p'
+    ];
+
+    if (filterArg) {
+      pass1Options.push('-vf', filterArg);
+    }
+
+    const pass2Options = [
+      '-y',
+      '-c:v', 'libx264',
+      '-b:v', `${safeVideoBitrate}k`,
+      '-preset', 'medium',
+      '-pass', '2',
+      '-passlogfile', passlogfile,
       '-c:a', 'aac',
-      '-b:a', '128k',
+      '-b:a', `${safeAudioBitrate}k`,
       '-movflags', '+faststart',
       '-pix_fmt', 'yuv420p',
       '-max_muxing_queue_size', '1024'
-    ]);
+    ];
 
-  if (scaleFilter) {
-    command = command.outputOptions(['-vf', scaleFilter]);
-  }
+    if (filterArg) {
+      pass2Options.push('-vf', filterArg);
+    }
 
-  command
-    .on('progress', (progress) => {
-      const job = jobs.get(jobId);
-      if (job) {
-        job.progress = Math.round(progress.percent || 0);
-        jobs.set(jobId, job);
-      }
-    })
-    .on('end', () => {
-      activeProcesses--;
-      const job = jobs.get(jobId);
-      if (job) {
-        job.status = 'completed';
-        job.progress = 100;
+    console.log(`[${jobId}] Two-pass encode: video=${safeVideoBitrate}k, audio=${safeAudioBitrate}k`);
 
-        try {
-          const inputStats = fs.statSync(inputPath);
-          const outputStats = fs.statSync(outputPath);
-          job.inputSize = inputStats.size;
-          job.outputSize = outputStats.size;
-          job.compression = Math.round((1 - outputStats.size / inputStats.size) * 100);
-        } catch (e) {
-          console.error('Erro ao obter stats:', e.message);
+    ffmpeg(inputPath)
+      .outputOptions(pass1Options)
+      .on('progress', (progress) => {
+        const job = jobs.get(jobId);
+        if (job) {
+          job.progress = Math.round((progress.percent || 0) / 2);
+          jobs.set(jobId, job);
+        }
+      })
+      .on('end', () => {
+        ffmpeg(inputPath)
+          .outputOptions(pass2Options)
+          .on('progress', (progress) => {
+            const job = jobs.get(jobId);
+            if (job) {
+              job.progress = 50 + Math.round((progress.percent || 0) / 2);
+              jobs.set(jobId, job);
+            }
+          })
+          .on('end', () => {
+            activeProcesses--;
+            const job = jobs.get(jobId);
+            if (job) {
+              job.status = 'completed';
+              job.progress = 100;
+
+              try {
+                const inputStats = fs.statSync(inputPath);
+                const outputStats = fs.statSync(outputPath);
+                job.inputSize = inputStats.size;
+                job.outputSize = outputStats.size;
+                job.compression = Math.round((1 - outputStats.size / inputStats.size) * 100);
+              } catch (e) {
+                console.error('Erro ao obter stats:', e.message);
+              }
+
+              jobs.set(jobId, job);
+            }
+
+            fs.unlink(inputPath, () => {});
+            fs.unlink(`${passlogfile}-0.log`, () => {});
+            fs.unlink(`${passlogfile}-0.log.mbtree`, () => {});
+            processNext();
+          })
+          .on('error', (err, stdout, stderr) => {
+            activeProcesses--;
+            console.error('Erro no FFmpeg (pass 2):', err.message);
+            console.error('FFmpeg stderr:', stderr);
+            const job = jobs.get(jobId);
+            if (job) {
+              job.status = 'error';
+              job.error = err.message || 'Erro desconhecido no FFmpeg';
+              jobs.set(jobId, job);
+            }
+
+            fs.unlink(inputPath, () => {});
+            fs.unlink(`${passlogfile}-0.log`, () => {});
+            fs.unlink(`${passlogfile}-0.log.mbtree`, () => {});
+            processNext();
+          })
+          .save(outputPath);
+      })
+      .on('error', (err, stdout, stderr) => {
+        activeProcesses--;
+        console.error('Erro no FFmpeg (pass 1):', err.message);
+        console.error('FFmpeg stderr:', stderr);
+        const job = jobs.get(jobId);
+        if (job) {
+          job.status = 'error';
+          job.error = err.message || 'Erro desconhecido no FFmpeg';
+          jobs.set(jobId, job);
         }
 
-        jobs.set(jobId, job);
-      }
+        fs.unlink(inputPath, () => {});
+        fs.unlink(`${passlogfile}-0.log`, () => {});
+        fs.unlink(`${passlogfile}-0.log.mbtree`, () => {});
+        processNext();
+      })
+      .save(process.platform === 'win32' ? 'NUL' : '/dev/null');
+  }
 
-      fs.unlink(inputPath, () => {});
-      processNext();
-    })
-    .on('error', (err, stdout, stderr) => {
-      activeProcesses--;
-      console.error('Erro no FFmpeg:', err.message);
-      console.error('FFmpeg stderr:', stderr);
-      const job = jobs.get(jobId);
-      if (job) {
-        job.status = 'error';
-        job.error = err.message || 'Erro desconhecido no FFmpeg';
-        jobs.set(jobId, job);
-      }
+  if (!maxSizeMB) {
+    runCrfEncode();
+    return;
+  }
 
-      fs.unlink(inputPath, () => {});
-      processNext();
-    })
-    .save(outputPath);
+  const targetSizeMB = Math.max(0.5, maxSizeMB * 0.85);
+
+  ffmpeg.ffprobe(inputPath, (err, metadata) => {
+    if (err || !metadata || !metadata.format || !metadata.format.duration) {
+      console.error('Erro ao obter duração do vídeo, usando CRF padrão:', err ? err.message : 'Sem duração');
+      runCrfEncode();
+      return;
+    }
+
+    const duration = metadata.format.duration;
+    if (!duration || duration <= 0) {
+      console.error('Duração inválida, usando CRF padrão');
+      runCrfEncode();
+      return;
+    }
+
+    const targetSizeBytes = targetSizeMB * 1024 * 1024;
+    const totalBitrateKbps = Math.floor((targetSizeBytes * 8) / duration / 1000);
+
+    if (!totalBitrateKbps || totalBitrateKbps <= 0) {
+      console.error('Bitrate alvo inválido, usando CRF padrão');
+      runCrfEncode();
+      return;
+    }
+
+    const audioBitrateKbps = Math.min(64, Math.max(32, Math.floor(totalBitrateKbps * 0.1)));
+    let videoBitrateKbps = totalBitrateKbps - audioBitrateKbps;
+
+    if (videoBitrateKbps < 50) {
+      videoBitrateKbps = 50;
+    }
+
+    console.log(`[${jobId}] Duração: ${duration.toFixed(1)}s, Alvo: ${targetSizeMB.toFixed(2)}MB, Bitrate total: ${totalBitrateKbps}kbps (v:${videoBitrateKbps}k a:${audioBitrateKbps}k)`);
+
+    runTwoPassEncode(videoBitrateKbps, audioBitrateKbps, scaleFilter);
+  });
 }
 
 app.use((err, req, res, next) => {
@@ -159,6 +325,7 @@ app.post('/api/compress', upload.array('videos', MAX_CONCURRENT), async (req, re
 
   const crf = parseInt(req.body.crf) || 23;
   const resolution = req.body.resolution || 'original';
+  const maxSizeMB = req.body.maxSize ? parseFloat(req.body.maxSize) : null;
 
   const jobIds = [];
 
@@ -181,7 +348,8 @@ app.post('/api/compress', upload.array('videos', MAX_CONCURRENT), async (req, re
       inputPath,
       outputPath,
       crf,
-      resolution
+      resolution,
+      maxSizeMB
     });
 
     jobIds.push(jobId);

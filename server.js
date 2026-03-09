@@ -1,18 +1,18 @@
-const express = require('express');
-const multer = require('multer');
-const ffmpeg = require('fluent-ffmpeg');
-const path = require('path');
-const fs = require('fs');
-const { v4: uuidv4 } = require('uuid');
+const express = require("express");
+const multer = require("multer");
+const ffmpeg = require("fluent-ffmpeg");
+const path = require("path");
+const fs = require("fs");
+const { v4: uuidv4 } = require("uuid");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const MAX_CONCURRENT = 5;
 
-const uploadsDir = path.join(__dirname, 'uploads');
-const outputDir = path.join(__dirname, 'output');
+const uploadsDir = path.join(__dirname, "uploads");
+const outputDir = path.join(__dirname, "output");
 
-[uploadsDir, outputDir].forEach(dir => {
+[uploadsDir, outputDir].forEach((dir) => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -23,7 +23,7 @@ const storage = multer.diskStorage({
   filename: (req, file, cb) => {
     const uniqueName = `${uuidv4()}${path.extname(file.originalname)}`;
     cb(null, uniqueName);
-  }
+  },
 });
 
 const upload = multer({
@@ -32,17 +32,17 @@ const upload = multer({
   fileFilter: (req, file, cb) => {
     const allowedTypes = /mp4|avi|mov|mkv|wmv|flv|webm/;
     const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = file.mimetype.startsWith('video/');
+    const mimetype = file.mimetype.startsWith("video/");
     if (extname && mimetype) {
       cb(null, true);
     } else {
-      cb(new Error('Apenas arquivos de vídeo são permitidos'));
+      cb(new Error("Apenas arquivos de vídeo são permitidos"));
     }
-  }
+  },
 });
 
-app.use(express.static('public'));
-app.use('/output', express.static(outputDir));
+app.use(express.static("public"));
+app.use("/output", express.static(outputDir));
 
 const jobs = new Map();
 
@@ -61,47 +61,57 @@ function startFFmpegProcess({ jobId, inputPath, outputPath, crf, resolution, max
   const job = jobs.get(jobId);
   if (!job) return;
 
-  job.status = 'processing';
+  job.status = "processing";
   jobs.set(jobId, job);
 
-  const scaleFilter = resolution !== 'original' ? {
-    '1080p': 'scale=1920:-2',
-    '720p': 'scale=1280:-2',
-    '480p': 'scale=854:-2',
-    '360p': 'scale=640:-2'
-  }[resolution] : null;
+  const scaleFilter =
+    resolution !== "original"
+      ? {
+          "1080p": "scale=1920:-2",
+          "720p": "scale=1280:-2",
+          "480p": "scale=854:-2",
+          "360p": "scale=640:-2",
+        }[resolution]
+      : null;
 
   function runCrfEncode() {
-    let command = ffmpeg(inputPath)
-      .outputOptions([
-        '-y',
-        '-c:v', 'libx264',
-        '-crf', String(crf),
-        '-preset', 'medium',
-        '-c:a', 'aac',
-        '-b:a', '128k',
-        '-movflags', '+faststart',
-        '-pix_fmt', 'yuv420p',
-        '-max_muxing_queue_size', '1024'
-      ]);
+    let command = ffmpeg(inputPath).outputOptions([
+      "-y",
+      "-c:v",
+      "libx264",
+      "-crf",
+      String(crf),
+      "-preset",
+      "medium",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "128k",
+      "-movflags",
+      "+faststart",
+      "-pix_fmt",
+      "yuv420p",
+      "-max_muxing_queue_size",
+      "1024",
+    ]);
 
     if (scaleFilter) {
-      command = command.outputOptions(['-vf', scaleFilter]);
+      command = command.outputOptions(["-vf", scaleFilter]);
     }
 
     command
-      .on('progress', (progress) => {
+      .on("progress", (progress) => {
         const job = jobs.get(jobId);
         if (job) {
           job.progress = Math.round(progress.percent || 0);
           jobs.set(jobId, job);
         }
       })
-      .on('end', () => {
+      .on("end", () => {
         activeProcesses--;
         const job = jobs.get(jobId);
         if (job) {
-          job.status = 'completed';
+          job.status = "completed";
           job.progress = 100;
 
           try {
@@ -111,7 +121,7 @@ function startFFmpegProcess({ jobId, inputPath, outputPath, crf, resolution, max
             job.outputSize = outputStats.size;
             job.compression = Math.round((1 - outputStats.size / inputStats.size) * 100);
           } catch (e) {
-            console.error('Erro ao obter stats:', e.message);
+            console.error("Erro ao obter stats:", e.message);
           }
 
           jobs.set(jobId, job);
@@ -120,14 +130,14 @@ function startFFmpegProcess({ jobId, inputPath, outputPath, crf, resolution, max
         fs.unlink(inputPath, () => {});
         processNext();
       })
-      .on('error', (err, stdout, stderr) => {
+      .on("error", (err, stdout, stderr) => {
         activeProcesses--;
-        console.error('Erro no FFmpeg:', err.message);
-        console.error('FFmpeg stderr:', stderr);
+        console.error("Erro no FFmpeg:", err.message);
+        console.error("FFmpeg stderr:", stderr);
         const job = jobs.get(jobId);
         if (job) {
-          job.status = 'error';
-          job.error = err.message || 'Erro desconhecido no FFmpeg';
+          job.status = "error";
+          job.error = err.message || "Erro desconhecido no FFmpeg";
           jobs.set(jobId, job);
         }
 
@@ -143,65 +153,84 @@ function startFFmpegProcess({ jobId, inputPath, outputPath, crf, resolution, max
     const safeAudioBitrate = Math.max(32, Math.floor(audioBitrateKbps));
 
     const pass1Options = [
-      '-y',
-      '-c:v', 'libx264',
-      '-b:v', `${safeVideoBitrate}k`,
-      '-preset', 'medium',
-      '-pass', '1',
-      '-passlogfile', passlogfile,
-      '-an',
-      '-f', 'null',
-      '-pix_fmt', 'yuv420p'
+      "-y",
+      "-c:v",
+      "libx264",
+      "-b:v",
+      `${safeVideoBitrate}k`,
+      "-preset",
+      "medium",
+      "-pass",
+      "1",
+      "-passlogfile",
+      passlogfile,
+      "-an",
+      "-f",
+      "null",
+      "-pix_fmt",
+      "yuv420p",
     ];
 
     if (filterArg) {
-      pass1Options.push('-vf', filterArg);
+      pass1Options.push("-vf", filterArg);
     }
 
     const pass2Options = [
-      '-y',
-      '-c:v', 'libx264',
-      '-b:v', `${safeVideoBitrate}k`,
-      '-preset', 'medium',
-      '-pass', '2',
-      '-passlogfile', passlogfile,
-      '-c:a', 'aac',
-      '-b:a', `${safeAudioBitrate}k`,
-      '-movflags', '+faststart',
-      '-pix_fmt', 'yuv420p',
-      '-max_muxing_queue_size', '1024'
+      "-y",
+      "-c:v",
+      "libx264",
+      "-b:v",
+      `${safeVideoBitrate}k`,
+      "-preset",
+      "medium",
+      "-pass",
+      "2",
+      "-passlogfile",
+      passlogfile,
+      "-c:a",
+      "aac",
+      "-b:a",
+      `${safeAudioBitrate}k`,
+      "-movflags",
+      "+faststart",
+      "-pix_fmt",
+      "yuv420p",
+      "-max_muxing_queue_size",
+      "1024",
     ];
 
     if (filterArg) {
-      pass2Options.push('-vf', filterArg);
+      pass2Options.push("-vf", filterArg);
     }
 
-    console.log(`[${jobId}] Two-pass encode: video=${safeVideoBitrate}k, audio=${safeAudioBitrate}k`);
+    console.log(
+      `[${jobId}] Two-pass encode: video=${safeVideoBitrate}k, audio=${safeAudioBitrate}k`
+    );
 
     ffmpeg(inputPath)
       .outputOptions(pass1Options)
-      .on('progress', (progress) => {
+      .on("progress", (progress) => {
         const job = jobs.get(jobId);
         if (job) {
           job.progress = Math.round((progress.percent || 0) / 2);
           jobs.set(jobId, job);
         }
       })
-      .on('end', () => {
+      .on("end", () => {
         ffmpeg(inputPath)
           .outputOptions(pass2Options)
-          .on('progress', (progress) => {
+          .on("progress", (progress) => {
             const job = jobs.get(jobId);
             if (job) {
               job.progress = 50 + Math.round((progress.percent || 0) / 2);
               jobs.set(jobId, job);
             }
           })
-          .on('end', () => {
+          .on("end", () => {
             activeProcesses--;
             const job = jobs.get(jobId);
             if (job) {
-              job.status = 'completed';
+              job.status = "completed";
               job.progress = 100;
 
               try {
@@ -211,7 +240,7 @@ function startFFmpegProcess({ jobId, inputPath, outputPath, crf, resolution, max
                 job.outputSize = outputStats.size;
                 job.compression = Math.round((1 - outputStats.size / inputStats.size) * 100);
               } catch (e) {
-                console.error('Erro ao obter stats:', e.message);
+                console.error("Erro ao obter stats:", e.message);
               }
 
               jobs.set(jobId, job);
@@ -222,14 +251,14 @@ function startFFmpegProcess({ jobId, inputPath, outputPath, crf, resolution, max
             fs.unlink(`${passlogfile}-0.log.mbtree`, () => {});
             processNext();
           })
-          .on('error', (err, stdout, stderr) => {
+          .on("error", (err, stdout, stderr) => {
             activeProcesses--;
-            console.error('Erro no FFmpeg (pass 2):', err.message);
-            console.error('FFmpeg stderr:', stderr);
+            console.error("Erro no FFmpeg (pass 2):", err.message);
+            console.error("FFmpeg stderr:", stderr);
             const job = jobs.get(jobId);
             if (job) {
-              job.status = 'error';
-              job.error = err.message || 'Erro desconhecido no FFmpeg';
+              job.status = "error";
+              job.error = err.message || "Erro desconhecido no FFmpeg";
               jobs.set(jobId, job);
             }
 
@@ -240,14 +269,14 @@ function startFFmpegProcess({ jobId, inputPath, outputPath, crf, resolution, max
           })
           .save(outputPath);
       })
-      .on('error', (err, stdout, stderr) => {
+      .on("error", (err, stdout, stderr) => {
         activeProcesses--;
-        console.error('Erro no FFmpeg (pass 1):', err.message);
-        console.error('FFmpeg stderr:', stderr);
+        console.error("Erro no FFmpeg (pass 1):", err.message);
+        console.error("FFmpeg stderr:", stderr);
         const job = jobs.get(jobId);
         if (job) {
-          job.status = 'error';
-          job.error = err.message || 'Erro desconhecido no FFmpeg';
+          job.status = "error";
+          job.error = err.message || "Erro desconhecido no FFmpeg";
           jobs.set(jobId, job);
         }
 
@@ -256,7 +285,7 @@ function startFFmpegProcess({ jobId, inputPath, outputPath, crf, resolution, max
         fs.unlink(`${passlogfile}-0.log.mbtree`, () => {});
         processNext();
       })
-      .save(process.platform === 'win32' ? 'NUL' : '/dev/null');
+      .save(process.platform === "win32" ? "NUL" : "/dev/null");
   }
 
   if (!maxSizeMB) {
@@ -268,14 +297,17 @@ function startFFmpegProcess({ jobId, inputPath, outputPath, crf, resolution, max
 
   ffmpeg.ffprobe(inputPath, (err, metadata) => {
     if (err || !metadata || !metadata.format || !metadata.format.duration) {
-      console.error('Erro ao obter duração do vídeo, usando CRF padrão:', err ? err.message : 'Sem duração');
+      console.error(
+        "Erro ao obter duração do vídeo, usando CRF padrão:",
+        err ? err.message : "Sem duração"
+      );
       runCrfEncode();
       return;
     }
 
     const duration = metadata.format.duration;
     if (!duration || duration <= 0) {
-      console.error('Duração inválida, usando CRF padrão');
+      console.error("Duração inválida, usando CRF padrão");
       runCrfEncode();
       return;
     }
@@ -284,7 +316,7 @@ function startFFmpegProcess({ jobId, inputPath, outputPath, crf, resolution, max
     const totalBitrateKbps = Math.floor((targetSizeBytes * 8) / duration / 1000);
 
     if (!totalBitrateKbps || totalBitrateKbps <= 0) {
-      console.error('Bitrate alvo inválido, usando CRF padrão');
+      console.error("Bitrate alvo inválido, usando CRF padrão");
       runCrfEncode();
       return;
     }
@@ -296,7 +328,9 @@ function startFFmpegProcess({ jobId, inputPath, outputPath, crf, resolution, max
       videoBitrateKbps = 50;
     }
 
-    console.log(`[${jobId}] Duração: ${duration.toFixed(1)}s, Alvo: ${targetSizeMB.toFixed(2)}MB, Bitrate total: ${totalBitrateKbps}kbps (v:${videoBitrateKbps}k a:${audioBitrateKbps}k)`);
+    console.log(
+      `[${jobId}] Duração: ${duration.toFixed(1)}s, Alvo: ${targetSizeMB.toFixed(2)}MB, Bitrate total: ${totalBitrateKbps}kbps (v:${videoBitrateKbps}k a:${audioBitrateKbps}k)`
+    );
 
     runTwoPassEncode(videoBitrateKbps, audioBitrateKbps, scaleFilter);
   });
@@ -304,10 +338,10 @@ function startFFmpegProcess({ jobId, inputPath, outputPath, crf, resolution, max
 
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
-    if (err.code === 'LIMIT_FILE_SIZE') {
-      return res.status(413).json({ error: 'Arquivo muito grande. Limite: 5GB' });
+    if (err.code === "LIMIT_FILE_SIZE") {
+      return res.status(413).json({ error: "Arquivo muito grande. Limite: 5GB" });
     }
-    if (err.code === 'LIMIT_FILE_COUNT') {
+    if (err.code === "LIMIT_FILE_COUNT") {
       return res.status(400).json({ error: `Máximo de ${MAX_CONCURRENT} arquivos por vez` });
     }
     return res.status(400).json({ error: err.message });
@@ -318,13 +352,13 @@ app.use((err, req, res, next) => {
   next();
 });
 
-app.post('/api/compress', upload.array('videos', MAX_CONCURRENT), async (req, res) => {
+app.post("/api/compress", upload.array("videos", MAX_CONCURRENT), async (req, res) => {
   if (!req.files || req.files.length === 0) {
-    return res.status(400).json({ error: 'Nenhum arquivo enviado' });
+    return res.status(400).json({ error: "Nenhum arquivo enviado" });
   }
 
   const crf = parseInt(req.body.crf) || 23;
-  const resolution = req.body.resolution || 'original';
+  const resolution = req.body.resolution || "original";
   const maxSizeMB = req.body.maxSize ? parseFloat(req.body.maxSize) : null;
 
   const jobIds = [];
@@ -336,11 +370,11 @@ app.post('/api/compress', upload.array('videos', MAX_CONCURRENT), async (req, re
     const outputPath = path.join(outputDir, outputFilename);
 
     jobs.set(jobId, {
-      status: 'queued',
+      status: "queued",
       progress: 0,
       inputFile: file.originalname,
       outputFile: outputFilename,
-      inputSize: file.size
+      inputSize: file.size,
     });
 
     processingQueue.push({
@@ -349,7 +383,7 @@ app.post('/api/compress', upload.array('videos', MAX_CONCURRENT), async (req, re
       outputPath,
       crf,
       resolution,
-      maxSizeMB
+      maxSizeMB,
     });
 
     jobIds.push(jobId);
@@ -357,45 +391,45 @@ app.post('/api/compress', upload.array('videos', MAX_CONCURRENT), async (req, re
 
   processNext();
 
-  res.json({ 
-    jobIds, 
-    message: `${req.files.length} vídeo(s) adicionado(s) à fila` 
+  res.json({
+    jobIds,
+    message: `${req.files.length} vídeo(s) adicionado(s) à fila`,
   });
 });
 
-app.get('/api/status/:jobId', (req, res) => {
+app.get("/api/status/:jobId", (req, res) => {
   const job = jobs.get(req.params.jobId);
   if (!job) {
-    return res.status(404).json({ error: 'Job não encontrado' });
+    return res.status(404).json({ error: "Job não encontrado" });
   }
   res.json({ ...job, jobId: req.params.jobId });
 });
 
-app.get('/api/status-batch', (req, res) => {
-  const jobIds = req.query.ids ? req.query.ids.split(',') : [];
+app.get("/api/status-batch", (req, res) => {
+  const jobIds = req.query.ids ? req.query.ids.split(",") : [];
   const results = {};
-  
+
   for (const jobId of jobIds) {
     const job = jobs.get(jobId);
     if (job) {
       results[jobId] = { ...job, jobId };
     }
   }
-  
+
   res.json(results);
 });
 
-app.get('/api/download/:jobId', (req, res) => {
+app.get("/api/download/:jobId", (req, res) => {
   const job = jobs.get(req.params.jobId);
-  if (!job || job.status !== 'completed') {
-    return res.status(404).json({ error: 'Arquivo não disponível' });
+  if (!job || job.status !== "completed") {
+    return res.status(404).json({ error: "Arquivo não disponível" });
   }
 
   const filePath = path.join(outputDir, job.outputFile);
   res.download(filePath, `compressed_${job.inputFile}`);
 });
 
-app.delete('/api/cleanup/:jobId', (req, res) => {
+app.delete("/api/cleanup/:jobId", (req, res) => {
   const job = jobs.get(req.params.jobId);
   if (job && job.outputFile) {
     const filePath = path.join(outputDir, job.outputFile);
@@ -405,9 +439,9 @@ app.delete('/api/cleanup/:jobId', (req, res) => {
   res.json({ success: true });
 });
 
-app.delete('/api/cleanup-batch', (req, res) => {
-  const jobIds = req.query.ids ? req.query.ids.split(',') : [];
-  
+app.delete("/api/cleanup-batch", (req, res) => {
+  const jobIds = req.query.ids ? req.query.ids.split(",") : [];
+
   for (const jobId of jobIds) {
     const job = jobs.get(jobId);
     if (job && job.outputFile) {
@@ -416,15 +450,15 @@ app.delete('/api/cleanup-batch', (req, res) => {
       jobs.delete(jobId);
     }
   }
-  
+
   res.json({ success: true });
 });
 
-app.get('/api/queue-status', (req, res) => {
+app.get("/api/queue-status", (req, res) => {
   res.json({
     activeProcesses,
     queueLength: processingQueue.length,
-    maxConcurrent: MAX_CONCURRENT
+    maxConcurrent: MAX_CONCURRENT,
   });
 });
 
